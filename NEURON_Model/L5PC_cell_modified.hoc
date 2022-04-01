@@ -1,0 +1,249 @@
+// Adapted by Daniel Foreacre (2022) from the following work:
+
+//Author: Etay Hay, 2011
+//  Models of Neocortical Layer 5b Pyramidal Cells Capturing a Wide Range of
+//  Dendritic and Perisomatic Active Properties
+//  (Hay et al., PLoS Computational Biology, 2011)
+//
+// A simulation of L5 Pyramidal Cell under a train of somatic pulses
+
+load_file("nrngui.hoc")
+
+objref cvode
+cvode = new CVode()
+
+//======================== settings ===================================
+
+v_init = -80
+tstop = 6000
+
+// Note: this pulse amplitude yields the correct behaviour in 64 bit NEURON environment.
+// In 32 bit NEURON environements, due to difference in float precision, this amplitude may need to be
+// modified slightly (amps = 1.94 nA).
+amps = 1.99
+
+//=================== creating cell object ===========================
+load_file("import3d.hoc")
+objref L5PC
+
+strdef morphology_file
+morphology_file = "../morphologies/cell1.asc"
+
+load_file("../models/L5PCbiophys3.hoc")
+load_file("../models/L5PCtemplate.hoc")
+L5PC = new L5PCtemplate(morphology_file)
+
+access L5PC.soma
+
+numDendSynapse = 84
+numApicSynapse = 109
+totalSynapse = numDendSynapse + numApicSynapse
+
+// Get total number of segments
+totalSegments = 0
+forall {
+  totalSegments += nseg
+}
+totalSegments -= L5PCtemplate[0].soma[0].nseg
+totalSegments -= L5PCtemplate[0].axon[0].nseg
+totalSegments -= L5PCtemplate[0].axon[1].nseg
+
+objref rExcite, rInhib
+
+// Seed from Neuron paper
+rExcite = new Random(100520)
+rInhib = new Random(100520)
+rExcite.normal(400, 1000)
+rInhib.normal(500, 1000)
+
+// Set up total experiments
+num_sims = 128
+objref experiment_list
+experiment_list = new List()
+
+// Objects for simulations
+objref synapse, netcon, netStim
+objref netConList, synapseList, stimList
+objref vsoma,vsoma_t, soma_spike, dendrite_spike, dend_spikes_list, apc
+objref sim_results
+
+for(sim_num=0;sim_num<num_sims;sim_num+=1) {
+
+  // Generate train of synapse signals
+  // Using AMPA/NMDA for excitatory and GABA for inhibitory signals
+  netConList = new List()
+  synapseList = new List()
+  stimList = new List()
+
+  // Create dendritic synapses
+  for(i=0;i<numDendSynapse;i+=1) {
+    access L5PCtemplate[0].dend[i]
+    for(j=0;j<nseg;j+=1) {
+      // Create excitatory synapses
+      synapse = new ProbAMPANMDA_EMS(j/nseg)
+      synapse.tau_r_AMPA = .3
+      synapse.tau_d_AMPA = 3
+      synapse.tau_r_NMDA = 2
+      synapse.tau_d_NMDA = 70
+      synapse.g = .4
+      synapseList.append(synapse)
+      
+      netStim = new NetStim(.5)
+      netStim.interval = rExcite.repick()
+      netStim.number = 75
+      netStim.noise = .5  
+      netStim.start = 0
+      stimList.append(netStim)
+
+      netcon = new NetCon(netStim, synapse)
+      netcon.delay = 0
+      netcon.weight = 1
+      netConList.append(netcon)
+
+      // Create inhibitory synapses
+      synapse = new ProbGABAAB_EMS(j/nseg)
+      synapse.tau_r_GABAA = 2
+      synapse.tau_d_GABAA = 8
+      synapse.g = 1
+      synapseList.append(synapse)
+
+      netStim = new NetStim(.5)
+      netStim.interval = rInhib.repick()
+      netStim.number = 60
+      netStim.noise = .5
+      netStim.start = 0
+      stimList.append(netStim)
+
+      netcon = new NetCon(netStim, synapse)
+      netcon.delay = 0
+      netcon.weight = -.4
+      netConList.append(netcon)
+    }
+  }
+  // Create apical synapses
+  for(i=0;i<numApicSynapse;i+=1) {
+    access L5PCtemplate[0].apic[i]
+    for(j=0;j<nseg;j+=1) {
+          // Create excitatory synapses
+      synapse = new ProbAMPANMDA_EMS(j/nseg)
+      synapse.tau_r_AMPA = .3
+      synapse.tau_d_AMPA = 3
+      synapse.tau_r_NMDA = 2
+      synapse.tau_d_NMDA = 70
+      synapse.g = .4
+      synapseList.append(synapse)
+      
+      netStim = new NetStim(.5)
+      netStim.interval = rExcite.repick()
+      netStim.number = 75
+      netStim.noise = .5
+      netStim.start = 0
+      stimList.append(netStim)
+
+      netcon = new NetCon(netStim, synapse)
+      netcon.delay = 0
+      netcon.weight = 1
+      netConList.append(netcon)
+
+      // Create inhibitory synapses
+      synapse = new ProbGABAAB_EMS(j/nseg)
+      synapse.tau_r_GABAA = 2
+      synapse.tau_d_GABAA = 8
+      synapse.g = 1
+      synapseList.append(synapse)
+
+      netStim = new NetStim(.5)
+      netStim.interval = rInhib.repick()
+      netStim.number = 60
+      netStim.noise = .5
+      netStim.start = 0
+      stimList.append(netStim)
+
+      netcon = new NetCon(netStim, synapse)
+      netcon.delay = 0
+      netcon.weight = -.4
+      netConList.append(netcon)
+    }
+  }
+  access L5PC.soma
+  //==================== recording settings ===========================
+
+  vsoma = new Vector()
+  vsoma_t = new Vector()
+  soma_spike = new Vector()
+
+  dend_spikes_list = new List()
+
+  cvode.record(&v(0.5),vsoma,vsoma_t)
+
+  apc = new APCount(0)
+  apc.record(soma_spike)
+
+  for(i=0;i<netConList.count();i+=1) {
+    dendrite_spike = new Vector()
+    netConList.o[i].record(dendrite_spike)
+    dend_spikes_list.append(dendrite_spike)
+  }
+
+  //============================= simulation ================================
+  init()
+  run()
+
+  // Compile results
+  sim_results = new List()
+  sim_results.append(dend_spikes_list)
+  sim_results.append(vsoma)
+  sim_results.append(soma_spike)
+
+  experiment_list.append(sim_results)
+  printf("Simulation %d complete.\n", sim_num)
+}
+
+objref save_input, save_v, save_spikes
+
+save_input = new File()
+save_v = new File()
+save_spikes = new File()
+save_input.wopen("nrn_inputs.dat")
+save_v.wopen("nrn_outputs.dat")
+save_spikes.wopen("nrn_spikes.dat")
+
+// Save dendrite spikes
+for(sim=0;sim<num_sims;sim+=1) {
+  for(i=1;i<experiment_list.o[sim].o[0].count();i+=1) {
+    save_input.printf("%f", experiment_list.o[sim].o[0].o[i].x[0])
+    for(j=1;j<experiment_list.o[sim].o[0].o[i].size();j+=1) {
+      save_input.printf(" %f", experiment_list.o[sim].o[0].o[i].x[j])
+    }
+    if(i<(experiment_list.o[sim].o[0].count()-1)) {
+      save_input.printf(" | ")
+    }
+  }
+  save_input.printf("\n")
+}
+
+// Save soma voltages
+for(sim=0;sim<num_sims;sim+=1) {
+  save_v.printf("%f", experiment_list.o[sim].o[1].x[0])
+  current_ms = 0
+  for(i=1;i<experiment_list.o[sim].o[1].size();i+=1) {
+    if(int(vsoma_t.x[i]) > current_ms && current_ms < 6000) {
+      current_ms += 1
+      save_v.printf(" %f", experiment_list.o[sim].o[1].x[i])
+    }
+  }
+  save_v.printf("\n")
+}
+
+// Save soma spikes
+for(sim=0;sim<num_sims;sim+=1) {
+  save_spikes.printf("%f", experiment_list.o[sim].o[2].x[0])
+  for(i=1;i<experiment_list.o[sim].o[2].size();i+=1) {
+    save_spikes.printf(" %f", experiment_list.o[sim].o[2].x[i])
+  }
+  save_spikes.printf("\n")
+}
+
+save_input.close()
+save_v.close()
+save_spikes.close()
